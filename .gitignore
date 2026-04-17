@@ -1,0 +1,5 @@
+models/
+.venv/
+coco_classes.txt
+README_batch.md
+TODO_mask_generator.md
