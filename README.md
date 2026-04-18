@@ -109,7 +109,7 @@ Output folder defaults to `<input_dir_name>_mask` alongside the input folder.
 | `--model-size` | `l` | YOLO model size: `n`, `s`, `m`, `l`, `x` |
 | `--yolo-conf` | 0.40 | Detection confidence threshold |
 | `--dilate` | 0 | Dilate masks by N pixels (safety margin) |
-| `--naming` | `colmap` | `colmap` = `image.jpg.png`, `simple` = `image.png` |
+| `--naming` | `colmap` | `colmap` = same filename as source, `simple` = `image.png` |
 | `--nerfstudio` | off | Flip mask convention for Nerfstudio/3DGS |
 | `--device` | auto | `cuda`, `cpu`, or `mps` |
 | `--dry-run` | off | Preview output paths without writing files |
@@ -137,9 +137,11 @@ python mask_generator.py ./images --dry-run
 ```
 images_mask/
 ├── mask_manifest.json
-├── frame_0001.jpg.png    (--naming colmap, default)
+├── frame_0001.jpg    (--naming colmap, default — same filename as source, PNG data)
 └── ...
 ```
+
+Masks are always written as PNG data regardless of the output filename extension.
 
 **Supported COCO classes:** see `coco_classes.txt` for the full list of 80 classes.
 
@@ -147,10 +149,30 @@ images_mask/
 
 | Application | Naming flag | Convention |
 |-------------|-------------|------------|
-| LichtFeld Studio | `--naming colmap` (default) | `image.jpg.png` |
-| RealityScan | `--naming simple` | `image.png` |
-| COLMAP | `--naming colmap` (default) | `image.jpg.png` |
+| LichtFeld Studio | `--naming colmap` (default) | same filename as source |
+| RealityScan | `--naming colmap` (default) | same filename as source |
+| COLMAP | `--naming colmap` (default) | same filename as source |
 | Nerfstudio | `--naming simple --nerfstudio` | `image.png` |
+
+**RealityScan folder naming convention:**
+
+RealityScan requires specific folder names to recognize images and masks:
+
+| Folder | Purpose |
+|--------|---------|
+| `.geometry` | Images to be aligned (source perspective crops) |
+| `.mask` | Corresponding masks (same filenames as images) |
+
+Example structure for RealityScan:
+```
+project/
+├── .geometry/
+│   ├── frame_0001.jpg
+│   └── ...
+└── .mask/
+    ├── frame_0001.jpg    (PNG data, same filename as image)
+    └── ...
+```
 
 **Model weights** are cached in `models/` next to the script and reused on subsequent runs.
 

@@ -93,11 +93,11 @@ def dilate_mask(mask: np.ndarray, pixels: int) -> np.ndarray:
 
 def build_output_path(src: Path, out_dir: Path, naming: str) -> Path:
     """
-    colmap:  image.jpg  → out_dir/image.jpg.png  (COLMAP --image_mask_path convention)
+    colmap:  image.jpg  → out_dir/image.jpg  (same filename as source)
     simple:  image.jpg  → out_dir/image.png
     """
     if naming == "colmap":
-        return out_dir / (src.name + ".png")
+        return out_dir / src.name
     return out_dir / (src.stem + ".png")
 
 
@@ -115,12 +115,16 @@ def process_image(
     nerfstudio: bool,
     naming: str,
     dry_run: bool,
+    alpha_dir: Path | None = None,
 ) -> dict:
     t0 = time.perf_counter()
 
     if dry_run:
         out_path = build_output_path(image_path, out_dir, naming)
         return {"source": str(image_path), "output": str(out_path), "dry_run": True}
+
+    orig = Image.open(image_path).convert("RGB")
+    W, H = orig.size
 
     mask = run_yolo(model, image_path, class_list, conf)
 
@@ -135,14 +139,19 @@ def process_image(
         if not nerfstudio:
             mask = 255 - mask
     else:
-        # No detections — whole image is valid; produce correct blank mask per convention
-        img = Image.open(image_path)
-        W, H = img.size
-        fill = 0 if nerfstudio else 255  # nerfstudio: black=valid; default: white=valid
+        fill = 0 if nerfstudio else 255
         mask = np.full((H, W), fill, dtype=np.uint8)
 
     out_path = build_output_path(image_path, out_dir, naming)
-    Image.fromarray(mask, mode="L").save(out_path)
+    Image.fromarray(mask, mode="L").save(out_path, format="PNG")
+
+    if alpha_dir is not None:
+        # Alpha = mask value; nerfstudio convention inverts meaning so re-invert for alpha
+        alpha_data = (255 - mask) if nerfstudio else mask
+        rgba = orig.copy()
+        rgba.putalpha(Image.fromarray(alpha_data, mode="L"))
+        alpha_path = alpha_dir / (image_path.stem + ".png")
+        rgba.save(alpha_path, format="PNG")
 
     elapsed = time.perf_counter() - t0
     return {
@@ -195,7 +204,7 @@ def parse_args():
         "--naming",
         default="colmap",
         choices=["colmap", "simple"],
-        help="Output file naming: colmap=image.jpg.png, simple=image.png (default: colmap)",
+        help="Output file naming: colmap=same filename as source, simple=image.png (default: colmap)",
     )
     parser.add_argument(
         "--nerfstudio",
@@ -206,6 +215,11 @@ def parse_args():
         "--device",
         default=None,
         help="cuda | cpu | mps (default: auto-detect)",
+    )
+    parser.add_argument(
+        "--alpha",
+        action="store_true",
+        help="Also output original images with mask as alpha channel into <input_dir>_alpha folder",
     )
     parser.add_argument(
         "--dry-run",
@@ -228,11 +242,16 @@ def main():
         sys.exit(1)
 
     if args.output_dir is None:
-        out_dir = input_dir.parent / f"{input_dir.name}_mask"
+        out_dir = input_dir.parent / ".mask"
     else:
         out_dir = Path(args.output_dir).resolve()
 
     out_dir.mkdir(parents=True, exist_ok=True)
+
+    alpha_dir: Path | None = None
+    if args.alpha:
+        alpha_dir = input_dir.parent / f"{input_dir.name}_alpha"
+        alpha_dir.mkdir(parents=True, exist_ok=True)
 
     # Collect images
     images = sorted(
@@ -252,6 +271,8 @@ def main():
     print(f"Model:    yolo11{args.model_size}-seg  |  conf={args.yolo_conf}")
     print(f"Device:   {device}")
     print(f"Naming:   {args.naming}{'  (nerfstudio inversion)' if args.nerfstudio else ''}")
+    if alpha_dir:
+        print(f"Alpha:    {alpha_dir}")
     if args.dry_run:
         print("DRY RUN — no files will be written")
     print()
@@ -297,6 +318,7 @@ def main():
             args.nerfstudio,
             args.naming,
             args.dry_run,
+            alpha_dir=alpha_dir,
         )
         results.append(rec)
         if rec.get("detected"):
@@ -308,6 +330,7 @@ def main():
     manifest = {
         "input_dir": str(input_dir),
         "output_dir": str(out_dir),
+        "alpha_dir": str(alpha_dir) if alpha_dir else None,
         "classes": sorted(class_list),
         "model": f"yolo11{args.model_size}-seg",
         "yolo_conf": args.yolo_conf,
