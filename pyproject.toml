@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gsplat-tools"
+version = "0.1.0"
+description = "Equirectangular-to-perspective batch converter and segmentation mask generator for 3DGS pipelines"
+requires-python = ">=3.9"
+dependencies = [
+    "numpy",
+    "pillow",
+    "opencv-python",
+    "ultralytics",
+    "tqdm",
+]
+
+[project.scripts]
+equirect-to-persp = "batch_equirect_to_persp:main"
+mask-gen = "mask_generator:main"
+
+[tool.setuptools]
+py-modules = ["batch_equirect_to_persp", "mask_generator"]

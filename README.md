@@ -42,6 +42,8 @@ python batch_equirect_to_persp.py <input_dir> <output_dir> [options]
 | `--workers` | CPU count − 1 | Set to 1 to disable multiprocessing |
 | `--yaws` | auto | Comma-separated yaw angles (manual override) |
 | `--pitches` | auto | Comma-separated pitch angles (manual override) |
+| `--cubemap` | off | Convert to 6 cubemap faces (FOV=90°); ignores `--fov`, `--width`, `--height`, `--yaws`, `--pitches` |
+| `--cubemap-size` | 1920 | Output resolution in pixels for each cubemap face |
 
 **Examples:**
 
@@ -61,11 +63,17 @@ python batch_equirect_to_persp.py input output --fov 80 --format png
 # Manual angle control
 python batch_equirect_to_persp.py input output --yaws "0,60,120,180,240,300" --pitches "-45,0,45"
 
+# Cubemap — 6 faces at default 1920×1920
+python batch_equirect_to_persp.py input output --cubemap
+
+# Cubemap — custom resolution, per-image subfolders
+python batch_equirect_to_persp.py input output --cubemap --cubemap-size 2048 --per-image-folders
+
 # Disable multiprocessing
 python batch_equirect_to_persp.py input output --workers 1
 ```
 
-**Output:**
+**Output (perspective mode):**
 ```
 output_dir/
 ├── batch_manifest.json
@@ -80,6 +88,31 @@ output_dir/
     ├── manifest.json
     ├── view_000_yaw000_pit-45.jpg
     └── ...
+```
+
+**Output (cubemap mode):**
+```
+output_dir/
+├── batch_manifest.json
+├── image1_front.jpg
+├── image1_back.jpg
+├── image1_right.jpg
+├── image1_left.jpg
+├── image1_up.jpg
+└── image1_down.jpg
+```
+With `--per-image-folders`:
+```
+output_dir/
+├── batch_manifest.json
+└── image1/
+    ├── manifest.json
+    ├── front.jpg
+    ├── back.jpg
+    ├── right.jpg
+    ├── left.jpg
+    ├── up.jpg
+    └── down.jpg
 ```
 
 ---

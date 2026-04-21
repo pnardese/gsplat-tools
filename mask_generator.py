@@ -42,8 +42,9 @@ def detect_device():
 def load_yolo_model(size: str, device: str):
     from ultralytics import YOLO
 
-    models_dir = Path(__file__).parent / "models"
-    models_dir.mkdir(exist_ok=True)
+    models_dir = Path(os.environ.get("GSPLAT_MODELS_DIR",
+                      Path.home() / ".gsplat-tools" / "models"))
+    models_dir.mkdir(parents=True, exist_ok=True)
     model_path = models_dir / f"yolo11{size}-seg.pt"
 
     model = YOLO(str(model_path))

@@ -86,6 +86,63 @@ def equirect_to_perspective(img, fov_deg=80, yaw_deg=0, pitch_deg=0, out_w=1024,
     return Image.fromarray(out)
 
 
+CUBEMAP_FACES = [
+    {'name': 'front', 'yaw':   0, 'pitch':  0},
+    {'name': 'back',  'yaw': 180, 'pitch':  0},
+    {'name': 'right', 'yaw':  90, 'pitch':  0},
+    {'name': 'left',  'yaw': -90, 'pitch':  0},
+    {'name': 'up',    'yaw':   0, 'pitch': 90},
+    {'name': 'down',  'yaw':   0, 'pitch':-90},
+]
+
+CUBEMAP_SIZE = 1920
+
+
+def process_image_cubemap(input_path, output_root, fmt, size=CUBEMAP_SIZE, per_image_folders=False):
+    img = Image.open(input_path).convert('RGB')
+    stem = input_path.stem
+    out_dir = output_root / stem if per_image_folders else output_root
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    suffix = 'jpg' if fmt.lower() in ('jpg', 'jpeg') else 'png'
+    manifest = []
+    for face in CUBEMAP_FACES:
+        view = equirect_to_perspective(
+            img,
+            fov_deg=90.0,
+            yaw_deg=face['yaw'],
+            pitch_deg=face['pitch'],
+            out_w=size,
+            out_h=size,
+        )
+        prefix = f'{stem}_' if not per_image_folders else ''
+        name = f'{prefix}{face["name"]}.{suffix}'
+        out_path = out_dir / name
+        save_kwargs = {'quality': 95} if suffix == 'jpg' else {}
+        view.save(out_path, **save_kwargs)
+        manifest.append({
+            'file': str(out_path),
+            'source': str(input_path),
+            'face': face['name'],
+            'yaw_deg': face['yaw'],
+            'pitch_deg': face['pitch'],
+            'fov_deg': 90.0,
+            'width': size,
+            'height': size,
+        })
+
+    with open(out_dir / 'manifest.json', 'w', encoding='utf-8') as f:
+        json.dump(manifest, f, indent=2)
+
+    return len(manifest)
+
+
+def worker_cubemap(task):
+    file, output_dir, fmt, size, per_image_folders = task
+    count = process_image_cubemap(file, output_dir, fmt, size=size, per_image_folders=per_image_folders)
+    return {'source': str(file), 'views_written': count}
+
+
 def parse_int_list(text):
     return [int(x.strip()) for x in text.split(',') if x.strip()]
 
@@ -198,6 +255,8 @@ def main():
     parser.add_argument('--per-image-folders', action='store_true', help='Write each source image into its own folder under the output directory')
     parser.add_argument('--format', type=str, default='jpg', choices=['png', 'jpg', 'jpeg'], help='Output format (default: jpg)')
     parser.add_argument('--workers', type=int, default=max(1, (os.cpu_count() or 1) - 1), help='Number of parallel worker processes (default: CPU count minus one)')
+    parser.add_argument('--cubemap', action='store_true', help='Convert each equirectangular image into 6 cubemap faces (FOV=90°); ignores --fov, --width, --height, --yaws, --pitches')
+    parser.add_argument('--cubemap-size', type=int, default=CUBEMAP_SIZE, metavar='PX', help=f'Output resolution for each cubemap face in pixels (default: {CUBEMAP_SIZE})')
     args = parser.parse_args()
 
     input_dir = Path(args.input_dir)
@@ -207,6 +266,50 @@ def main():
     if not input_dir.exists() or not input_dir.is_dir():
         raise SystemExit(f'Input folder does not exist or is not a directory: {input_dir}')
 
+    exts = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.webp'}
+    files = sorted([p for p in input_dir.iterdir() if p.is_file() and p.suffix.lower() in exts])
+
+    if not files:
+        raise SystemExit(f'No supported image files found in {input_dir}')
+
+    if args.cubemap:
+        tasks = [(file, output_dir, args.format, args.cubemap_size, args.per_image_folders) for file in files]
+        summary = []
+        total_views = 0
+
+        if args.workers == 1:
+            for task in tasks:
+                result = worker_cubemap(task)
+                summary.append(result)
+                total_views += result['views_written']
+                print(f"Processed {Path(result['source']).name}: {result['views_written']} cubemap faces")
+        else:
+            with mp.Pool(processes=args.workers) as pool:
+                for result in pool.imap_unordered(worker_cubemap, tasks):
+                    summary.append(result)
+                    total_views += result['views_written']
+                    print(f"Processed {Path(result['source']).name}: {result['views_written']} cubemap faces")
+
+        summary.sort(key=lambda x: x['source'])
+
+        with open(output_dir / 'batch_manifest.json', 'w', encoding='utf-8') as f:
+            json.dump({
+                'mode': 'cubemap',
+                'input_dir': str(input_dir),
+                'output_dir': str(output_dir),
+                'face_size': args.cubemap_size,
+                'fov_deg': 90.0,
+                'format': args.format,
+                'per_image_folders': args.per_image_folders,
+                'faces': [f['name'] for f in CUBEMAP_FACES],
+                'files': summary,
+                'total_input_images': len(files),
+                'total_views_written': total_views,
+            }, f, indent=2)
+
+        print(f'Done. {len(files)} source images -> {total_views} cubemap faces')
+        return
+
     out_h = args.height if args.height is not None else args.width
     if args.yaws and args.pitches:
         yaws = parse_int_list(args.yaws)
@@ -215,12 +318,6 @@ def main():
         raise SystemExit('Provide both --yaws and --pitches, or neither to use adaptive sampling.')
     else:
         yaws, pitches = build_adaptive_angles(args.fov, max_overlap=args.max_overlap, include_poles=args.include_poles)
-
-    exts = {'.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp', '.webp'}
-    files = sorted([p for p in input_dir.iterdir() if p.is_file() and p.suffix.lower() in exts])
-
-    if not files:
-        raise SystemExit(f'No supported image files found in {input_dir}')
 
     tasks = [(file, output_dir, args.fov, args.width, out_h, yaws, pitches, args.format, args.latitude_aware, args.max_overlap, args.include_poles, args.per_image_folders) for file in files]
     summary = []
@@ -243,6 +340,7 @@ def main():
 
     with open(output_dir / 'batch_manifest.json', 'w', encoding='utf-8') as f:
         json.dump({
+            'mode': 'perspective',
             'input_dir': str(input_dir),
             'output_dir': str(output_dir),
             'fov_deg': args.fov,
